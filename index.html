@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>سام يقفز فوق السيارات – نسخة ثابتة 100%</title>
+  <meta name="theme-color" content="#0b0f1a">
+  <link rel="manifest" href="manifest.json">
+  <style>
+    html, body { height:100%; margin:0; background:#0b0f1a; }
+    #game { width:100vw; height:100vh; display:block; touch-action:none; }
+    #ui { position:fixed; top:10px; left:10px; display:flex; gap:8px; z-index:10; }
+    .btn { width:44px; height:44px; border-radius:999px; background:#ffffffee; color:#0b0f1a; border:none; box-shadow:0 6px 18px rgba(0,0,0,.25); font-size:20px; cursor:pointer; display:grid; place-items:center; }
+    .btn:active { transform:translateY(1px); }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="ui">
+    <button class="btn" id="jumpBtn" title="قفز">⬆️</button>
+    <button class="btn" id="playBtn" title="بدء/إيقاف">▶️</button>
+    <button class="btn" id="uploadBtn" title="رفع صورة سام">📷</button>
+    <input id="file" type="file" accept="image/*" hidden />
+  </div>
+
+  <script>
+  (function(){
+    const cv = document.getElementById('game');
+    const ctx = cv.getContext('2d');
+    const fileInput = document.getElementById('file');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const playBtn = document.getElementById('playBtn');
+    const jumpBtn = document.getElementById('jumpBtn');
+
+    // حالة اللعبة
+    let running = false;
+    let gameOver = false;
+    let score = 0, highScore = 0;
+    let lastTs = 0;
+    let charImg = null;
+
+    // صوت بسيط (WebAudio)
+    let audioCtx = null; let audioUnlocked = false;
+    function unlockAudio(){ if (audioUnlocked) return; audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); audioUnlocked = true; }
+    function beep(freq, time, type, vol){ if(!audioUnlocked) return; const o=audioCtx.createOscillator(); const g=audioCtx.createGain(); o.type=type; o.frequency.value=freq; g.gain.value=vol; o.connect(g); g.connect(audioCtx.destination); const now = audioCtx.currentTime; o.start(now); o.stop(now+time); g.gain.setValueAtTime(vol, now); g.gain.exponentialRampToValueAtTime(0.001, now+time); }
+
+    // العالم
+    const world = {
+      w: 900,
+      h: 500,
+      groundY: 450,
+      pxPerSec: 720,
+      baseSpeed: 720,
+      speedAccel: 40,     // زيادة السرعة/ث
+      gravity: 2300,
+      jumpVel: 1250,
+      spawnEvery: 1.6,    // أبعد افتراضياً
+      minSpawnEvery: 1.0,
+      spawnTimer: 0,
+      cars: [],
+      sam: { x: 140, y: 0, w: 84, h: 96, vy: 0, onGround: true },
+      bg: { x: 0 }
+    };
+
+    // قياس الشاشة بدقة + DPR
+    function resize(){
+      const dpr = Math.max(1, Math.min(4, window.devicePixelRatio || 1));
+      const vw = window.innerWidth, vh = window.innerHeight;
+      cv.width = Math.floor(vw * dpr);
+      cv.height = Math.floor(vh * dpr);
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+      world.w = vw; world.h = vh; world.groundY = Math.round(vh * 0.86);
+      // حجم سام كنسبة من الشاشة
+      world.sam.h = Math.round(vh * 0.18);
+      world.sam.w = Math.round(world.sam.h * 0.8);
+      world.sam.x = Math.round(vw * 0.14);
+      world.sam.y = world.groundY - world.sam.h;
+      // اضبط السرعة الأساسية على حسب العرض
+      world.pxPerSec = world.baseSpeed * (vw/900);
+    }
+    window.addEventListener('resize', resize);
+    window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+    resize();
+
+    // رفع صورة
+    uploadBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => {
+      const f = e.target.files && e.target.files[0]; if(!f) return;
+      const url = URL.createObjectURL(f);
+      const img = new Image();
+      img.onload = () => { charImg = img; };
+      img.src = url;
+    });
+
+    // تفاعل المستخدم
+    function startOrJump(){ unlockAudio(); if(!running && !gameOver){ running = true; playBtn.textContent = '⏸️'; } if(gameOver){ reset(); running = true; playBtn.textContent = '⏸️'; } jump(); }
+    function jump(){ const s = world.sam; if (s.onGround){ s.vy = - world.jumpVel * (world.h/500); s.onGround = false; beep(760, .1, 'triangle', .28); } }
+    function reset(){ score = 0; gameOver = false; world.cars = []; world.spawnTimer = 0; world.pxPerSec = world.baseSpeed * (world.w/900); const s=world.sam; s.y = world.groundY - s.h; s.vy = 0; s.onGround = true; }
+
+    playBtn.addEventListener('click', () => { if(gameOver) reset(); running = !running; playBtn.textContent = running ? '⏸️' : '▶️'; });
+    jumpBtn.addEventListener('click', startOrJump);
+    cv.addEventListener('pointerdown', startOrJump, {passive:false});
+    window.addEventListener('keydown', (e) => {
+      const k = e.key;
+      if (k === ' ' || k === 'Space' || k === 'ArrowUp' || k === 'w' || k === 'W') { e.preventDefault(); startOrJump(); }
+      if (k === 'r' || k === 'R') { reset(); running = true; playBtn.textContent = '⏸️'; }
+      if (k === 'p' || k === 'P') { running = !running; playBtn.textContent = running ? '⏸️' : '▶️'; }
+    });
+
+    // سيارات
+    function spawnCar(){
+      // 9%–13% من ارتفاع الشاشة، والعرض 1.6x–2x الارتفاع
+      const carH = Math.round(world.h * (0.09 + Math.random()*0.04));
+      const carW = Math.round(carH * (1.6 + Math.random()*0.4));
+      const y = world.groundY - carH;
+      world.cars.push({ x: world.w + 20, y, w: carW, h: carH, color: '#facc15' }); // أصفر واضح
+    }
+
+    // منطق
+    function update(dt){
+      // خلفية تتحرك ببطء
+      world.bg.x = (world.bg.x - (world.pxPerSec*0.25)*dt) % world.w;
+
+      if(!(running && !gameOver)) return;
+
+      // سرعة تزداد تدريجيًا
+      world.pxPerSec += world.speedAccel * dt;
+
+      // فيزياء سام
+      const s = world.sam; s.vy += world.gravity*(world.h/500)*dt; s.y += s.vy*dt; if (s.y >= world.groundY - s.h){ s.y = world.groundY - s.h; s.vy = 0; s.onGround = true; }
+
+      // توليد سيارات مع تباعد آمن
+      world.spawnTimer -= dt;
+      const speedFactor = (world.pxPerSec - world.baseSpeed) / 800;
+      const dynamicSpawn = Math.max(world.minSpawnEvery, world.spawnEvery - speedFactor*0.5);
+      const last = world.cars[world.cars.length - 1];
+      const minGapPx = Math.max(world.w * 0.24, world.sam.w * 3.2); // مسافة دنيا بين السيارات
+      const canSpawn = !last || (last.x + last.w) < (world.w - minGapPx);
+      if (world.spawnTimer <= 0 && canSpawn) { world.spawnTimer = dynamicSpawn; spawnCar(); }
+      else if (world.spawnTimer < -0.25) { world.spawnTimer = 0; }
+
+      // تحريك السيارات وتنظيفها
+      for (const c of world.cars) c.x -= world.pxPerSec * dt;
+      world.cars = world.cars.filter(c => c.x + c.w > -20);
+
+      // نقاط
+      score += Math.floor(60 * dt);
+
+      // تصادم AABB
+      for (const c of world.cars){
+        if (rectsIntersect(s.x, s.y, s.w, s.h, c.x, c.y, c.w, c.h)){
+          gameOver = true; running = false; highScore = Math.max(highScore, score); beep(180, .22, 'sawtooth', .34); break;
+        }
+      }
+    }
+
+    function rectsIntersect(ax, ay, aw, ah, bx, by, bw, bh){
+      return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+    }
+
+    // رسم
+    function draw(){
+      const w = world.w, h = world.h; ctx.clearRect(0,0,w,h);
+      // خلفية – سماء المدينة
+      const sky = ctx.createLinearGradient(0,0,0,h); sky.addColorStop(0,'#0e1726'); sky.addColorStop(.5,'#131b2e'); sky.addColorStop(1,'#1b243b'); ctx.fillStyle = sky; ctx.fillRect(0,0,w,h);
+      // تلال/مبانٍ بعيدة (بسيطة)
+      ctx.fillStyle = '#0b1324'; drawHills(world.bg.x*0.5, 0.8);
+      ctx.fillStyle = '#111827'; drawHills(world.bg.x*0.8, 0.6);
+      // أرض/طريق
+      ctx.fillStyle = '#0f172a'; ctx.fillRect(0, world.groundY, w, h - world.groundY);
+      ctx.fillStyle = '#1f9d55'; ctx.fillRect(0, world.groundY-6, w, 6);
+      ctx.strokeStyle='rgba(255,255,255,.55)'; ctx.lineWidth=3; ctx.setLineDash([18,16]); ctx.beginPath(); ctx.moveTo(0, world.groundY+24); ctx.lineTo(w, world.groundY+24); ctx.stroke(); ctx.setLineDash([]);
+
+      // سيارات
+      for (const c of world.cars) drawCar(c);
+
+      // سام + ظل
+      const s = world.sam; ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(s.x + s.w*0.5, world.groundY+2, s.w*0.35, 10, 0, 0, Math.PI*2); ctx.fill();
+      if (charImg) ctx.drawImage(charImg, s.x, s.y, s.w, s.h); else { ctx.fillStyle='#22d3ee'; roundRect(s.x, s.y, s.w, s.h, 10); ctx.fill(); }
+
+      // نقاط
+      ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.font = '600 16px system-ui, -apple-system, Segoe UI';
+      ctx.fillText('النقاط: ' + score + ' · الأعلى: ' + Math.max(highScore, score), 14, 26);
+
+      if (!running && !gameOver){ ctx.fillStyle = '#eef2ff'; ctx.font = '600 20px system-ui'; centerText('اضغط/المس للبدء — اقفز بسبيس/لمس', w/2, h/2 - 8); }
+      if (gameOver){ ctx.fillStyle='rgba(0,0,0,.45)'; ctx.fillRect(0,0,w,h); ctx.fillStyle='#fff'; ctx.font='bold 32px system-ui'; centerText('انتهت الجولة!', w/2, h/2 - 14); ctx.font='16px system-ui'; centerText('نتيجتك: ' + score + ' — اضغط R/انقر لإعادة', w/2, h/2 + 22); }
+    }
+
+    function drawHills(offsetX, scaleY){
+      const gy = world.groundY, ww = world.w, hh = world.h; ctx.beginPath(); ctx.moveTo(0 + offsetX, gy);
+      for (let x = 0; x <= ww; x += 30){ const y = gy - 90*scaleY - 20*Math.sin((x+offsetX) * 0.01); ctx.lineTo(x + offsetX, y); }
+      ctx.lineTo(ww + offsetX, hh); ctx.lineTo(0 + offsetX, hh); ctx.closePath(); ctx.fill();
+    }
+
+    function drawCar(c){
+      // جسم السيارة
+      const r = 10; const bodyH = c.h * 0.6; const cabinH = c.h * 0.45; const cabinW = c.w * 0.45; const bodyY = c.y + (c.h - bodyH);
+      // ظل
+      ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(c.x + c.w*0.5, world.groundY+3, c.w*0.35, 8, 0, 0, Math.PI*2); ctx.fill();
+      // توهج خفيف
+      ctx.save(); ctx.shadowColor = 'rgba(250,204,21,.55)'; ctx.shadowBlur = 14;
+      // هيكل
+      ctx.fillStyle = c.color; roundRect(c.x, bodyY, c.w, bodyH, r); ctx.fill(); ctx.lineWidth=2; ctx.strokeStyle='rgba(0,0,0,.35)'; ctx.stroke();
+      // كابينة
+      ctx.fillStyle = c.color; roundRect(c.x + c.w*0.4, bodyY - cabinH + 6, cabinW, cabinH, r*0.8); ctx.fill(); ctx.stroke();
+      ctx.restore();
+      // نافذة
+      ctx.fillStyle = 'rgba(255,255,255,.92)'; roundRect(c.x + c.w*0.45, bodyY - cabinH + 14, cabinW*0.5, cabinH*0.55, 6); ctx.fill();
+      // مصابيح
+      ctx.fillStyle = '#fff6a6'; roundRect(c.x + 6, bodyY + bodyH*0.25, 10, 8, 3); ctx.fill();
+      ctx.fillStyle = '#ff6b6b'; roundRect(c.x + c.w - 14, bodyY + bodyH*0.25, 10, 8, 3); ctx.fill();
+      // عجلات
+      const wheelY = world.groundY - 6; ctx.fillStyle = '#111827';
+      ctx.beginPath(); ctx.arc(c.x + c.w*0.25, wheelY, Math.max(6, c.h*0.18), 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(c.x + c.w*0.75, wheelY, Math.max(6, c.h*0.18), 0, Math.PI*2); ctx.fill();
+    }
+
+    function roundRect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+    function centerText(text, cx, cy){ const m = ctx.measureText(text); ctx.fillText(text, cx - m.width/2, cy); }
+
+    // حلقة اللعبة
+    function frame(ts){
+      if (!lastTs) lastTs = ts; const dt = Math.min(0.033, (ts - lastTs) / 1000); lastTs = ts;
+      update(dt); draw(); requestAnimationFrame(frame);
+    }
+    reset();
+    requestAnimationFrame(frame);
+
+    // Register service worker only on http(s) to avoid errors for local files
+    if ('serviceWorker' in navigator && String(location.protocol).startsWith('http')) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
+    }
+  })();
+  </script>
+</body>
+</html>
